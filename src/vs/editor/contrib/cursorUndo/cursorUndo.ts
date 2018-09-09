@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+// カーソル位置のUndoができるようになる拡張
+
 import * as nls from 'vs/nls';
 import { Selection } from 'vs/editor/common/core/selection';
 import { ServicesAccessor, registerEditorContribution, EditorAction, registerEditorAction } from 'vs/editor/browser/editorExtensions';
@@ -13,6 +15,8 @@ import { IEditorContribution, ScrollType } from 'vs/editor/common/editorCommon';
 import { EditorContextKeys } from 'vs/editor/common/editorContextKeys';
 import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
 import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
+
+// カーソルの位置を保持するクラス
 
 class CursorState {
 	readonly selections: Selection[];
@@ -36,15 +40,21 @@ class CursorState {
 	}
 }
 
-export class CursorUndoController extends Disposable implements IEditorContribution {
+// このクラスのインスタンスはエディターごとに作られる
 
+export class CursorUndoController extends Disposable
+	implements IEditorContribution {
 	private static readonly ID = 'editor.contrib.cursorUndoController';
 
 	public static get(editor: ICodeEditor): CursorUndoController {
-		return editor.getContribution<CursorUndoController>(CursorUndoController.ID);
+		return editor.getContribution<CursorUndoController>(
+			CursorUndoController.ID
+		);
 	}
 
 	private readonly _editor: ICodeEditor;
+	// カーソルを元に戻した時に、
+	// カーソル移動が記憶されないようにするために使うフラグ
 	private _isCursorUndo: boolean;
 
 	private _undoStack: CursorState[];
@@ -58,26 +68,41 @@ export class CursorUndoController extends Disposable implements IEditorContribut
 		this._undoStack = [];
 		this._prevState = this._readState();
 
-		this._register(editor.onDidChangeModel((e) => {
-			this._undoStack = [];
-			this._prevState = null;
-		}));
-		this._register(editor.onDidChangeModelContent((e) => {
-			this._undoStack = [];
-			this._prevState = null;
-		}));
-		this._register(editor.onDidChangeCursorSelection((e) => {
-
-			if (!this._isCursorUndo && this._prevState) {
-				this._undoStack.push(this._prevState);
-				if (this._undoStack.length > 50) {
-					// keep the cursor undo stack bounded
-					this._undoStack.shift();
+		this._register(
+			editor.onDidChangeModel(e => {
+				// Editor modelが変更した時には
+				// 状態を空にする
+				this._undoStack = [];
+				this._prevState = null;
+			})
+		);
+		this._register(
+			editor.onDidChangeModelContent(e => {
+				// Editor modelの内容が変更した時には
+				// 状態を空にする
+				this._undoStack = [];
+				this._prevState = null;
+			})
+		);
+		this._register(
+			editor.onDidChangeCursorSelection(e => {
+				// カーソル位置が変わった時に、カーソル位置を
+				// スタックに貯める
+				if (!this._isCursorUndo && this._prevState) {
+					this._undoStack.push(this._prevState);
+					// カーソル位置の記憶が50件に達したら
+					// 古いものを消す
+					if (this._undoStack.length > 50) {
+						// keep the cursor undo stack bounded
+						this._undoStack.shift();
+					}
 				}
-			}
 
-			this._prevState = this._readState();
-		}));
+				// 現在のカーソル位置を、次にカーソルが
+				// 動いた時用に保存しておく
+				this._prevState = this._readState();
+			})
+		);
 	}
 
 	private _readState(): CursorState {
@@ -102,7 +127,10 @@ export class CursorUndoController extends Disposable implements IEditorContribut
 			if (!prevState.equals(currState)) {
 				this._isCursorUndo = true;
 				this._editor.setSelections(prevState.selections);
-				this._editor.revealRangeInCenterIfOutsideViewport(prevState.selections[0], ScrollType.Smooth);
+				this._editor.revealRangeInCenterIfOutsideViewport(
+					prevState.selections[0],
+					ScrollType.Smooth
+				);
 				this._isCursorUndo = false;
 				return;
 			}
@@ -114,21 +142,33 @@ export class CursorUndo extends EditorAction {
 	constructor() {
 		super({
 			id: 'cursorUndo',
-			label: nls.localize('cursor.undo', "Soft Undo"),
+			label: nls.localize("cursor.undo", "Soft Undo"),
 			alias: 'Soft Undo',
 			precondition: null,
 			kbOpts: {
+				// テキスト入力状態にある
 				kbExpr: EditorContextKeys.textInputFocus,
+				// Ctrl(Cmd) + U で発火
 				primary: KeyMod.CtrlCmd | KeyCode.KEY_U,
+
 				weight: KeybindingWeight.EditorContrib
 			}
 		});
 	}
 
-	public run(accessor: ServicesAccessor, editor: ICodeEditor, args: any): void {
+	public run(
+		accessor: ServicesAccessor,
+		editor: ICodeEditor,
+		args: any
+	): void {
+		// アクションが発火されたエディターの
+		// CursorUndoControllerのインスタンスを取得し、
+		// カーソルを一つ前の位置に戻す動作を実行
 		CursorUndoController.get(editor).cursorUndo();
 	}
 }
 
+// エディターの拡張を登録
 registerEditorContribution(CursorUndoController);
+// エディターのアクションを登録
 registerEditorAction(CursorUndo);
